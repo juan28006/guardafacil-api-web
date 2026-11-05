@@ -636,3 +636,25 @@
     padding: 16px;
   }
 }
+
+.reservation-action.delete {
+  color: #dc2626;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  transition: all 0.2s ease;
+}
+
+.reservation-action.delete:hover {
+  color: #ffffff;
+  background: #dc2626;
+  border-color: #dc2626;
+}
+
+.delete-submit {
+  background: #dc2626 !important;
+  color: #ffffff !important;
+}
+
+.delete-submit:hover {
+  background: #b91c1c !important;
+}

@@ -135,16 +135,22 @@ export default function Dashboard() {
   }
 
   async function solicitarReserva(event) {
-
     event.preventDefault();
+
     if (!selectedLocker || savingReservation) return;
+
     if (!reservationDate || !reservationSlot.trim()) {
       setError('Selecciona la fecha y la franja horaria.');
+      setSelectedLocker(null);
+      setReservationDate('');
+      setReservationSlot('');
       return;
     }
+
     setSavingReservation(true);
     setMessage('');
     setError('');
+
     try {
       await api.post('/reservas', {
         zonaId: selectedLocker.zoneId,
@@ -152,15 +158,18 @@ export default function Dashboard() {
         fecha: reservationDate,
         franja: reservationSlot.trim(),
       });
+
       setSelectedLocker(null);
       setReservationDate('');
       setReservationSlot('');
-      navigate('/reservas');
+
+      setMessage('¡Reserva realizada correctamente!');
     } catch (err) {
-      setError(
-        err.response?.data?.error?.mensaje || err.response?.data?.mensaje || err.response?.data?.error ||
-          'No se pudo crear la reserva. Comprueba la fecha, la franja y la disponibilidad.'
-      );
+      const mensaje = err.response?.data?.error?.mensaje || err.response?.data?.mensaje || err.response?.data?.error || 'No se pudo crear la reserva.';
+      setSelectedLocker(null);
+      setReservationDate('');
+      setReservationSlot('');
+      setError(mensaje);
     } finally {
       setSavingReservation(false);
     }
@@ -196,7 +205,8 @@ export default function Dashboard() {
       )}
 
       {error && (
-        <div className="dashboard-message" role="alert">
+        <div className="dashboard-message dashboard-error" role="alert">
+          <span>!</span>
           <span>{error}</span>
           <button type="button" onClick={() => setError('')} aria-label="Cerrar error">
             ×
@@ -372,11 +382,12 @@ export default function Dashboard() {
                 </label>
                 <label className="reservation-form-label">
                   Franja horaria
-                  <input type="text" value={reservationSlot}
-                    onChange={(event) =>
-                      setReservationSlot(event.target.value)
-                    }
-                    placeholder="Ej. mañana" required/>
+                  <select value={reservationSlot} onChange={(event) => setReservationSlot(event.target.value)} required>
+                    <option value="">Selecciona una franja horaria</option>
+                    <option value="Mañana">Mañana</option>
+                    <option value="Tarde">Tarde</option>
+                    <option value="Noche">Noche</option>
+                  </select>
                 </label>
                 <button type="submit" className="reserve-button" disabled={savingReservation}>
                   <Plus size={18} />
@@ -393,6 +404,20 @@ export default function Dashboard() {
               Cerrar
             </button>
           </section>
+          {(error || message) && (
+            <div className="notification-backdrop">
+              <div className="notification-modal" role="alert">
+                <div className={`notification-icon ${error ? 'error' : 'success'}`}>
+                  {error ? '!' : '✓'}
+                </div>
+                <h3>{error ? 'Atención' : '¡Excelente!'}</h3>
+                <p>{error || message}</p>
+                <button type="button" onClick={() => { setError(''); setMessage('');}}>
+                  Entendido
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

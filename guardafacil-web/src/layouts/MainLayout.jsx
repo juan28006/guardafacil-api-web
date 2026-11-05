@@ -19,10 +19,10 @@ const navegacion = [
     roles: ['estudiante', 'gestor', 'administrador'],
   },
   {
-    nombre: 'Reservas',
+    nombre: 'Mis reservas',
     ruta: '/reservas',
     icono: CalendarCheck,
-    roles: ['gestor', 'administrador'],
+    roles: ['estudiante', 'gestor', 'administrador'],
   },
   {
     nombre: 'Usuarios',

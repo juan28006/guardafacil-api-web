@@ -123,7 +123,9 @@ export const crearApp = ({ repo, auth, config, reloj }) => {
   app.post('/reservas/:reservaId/iniciar-uso', ...protegida(), ruta(async (req, res) => (
     res.json(await servicios.iniciarUso(req.actor, req.params.reservaId))
   )));
-
+  app.delete('/reservas/:reservaId', ...protegida(ROLES.GESTOR, ROLES.ADMINISTRADOR), ruta(async (req, res) => (
+    res.json( await servicios.eliminarReserva( req.actor, req.params.reservaId ))
+  )));
   // ---------- Administración ----------
   app.get('/usuarios', ...protegida(ROLES.ADMINISTRADOR), ruta(async (_req, res) => (
     res.json(await servicios.listarUsuarios())

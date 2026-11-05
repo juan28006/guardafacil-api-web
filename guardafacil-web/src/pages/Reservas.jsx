@@ -1,7 +1,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useAuth } from '../context/AuthContext';
 import { Search, CalendarDays, CheckCircle2, Clock3, XCircle, Eye, Ban, X, UserRound,
-  MapPin, LockKeyhole, Filter, RefreshCw, AlertCircle,} from 'lucide-react';
+  MapPin, LockKeyhole, Filter, RefreshCw, AlertCircle, Trash2, } from 'lucide-react';
 import api from '../services/api';
 import './Reservas.css';
 
@@ -75,39 +76,76 @@ function getErrorMessage(error) {
 
 export default function Reservas() {
 
+  const { usuario, cargando: cargandoSesion } = useAuth();
   const [reservations, setReservations] = useState([]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [dateFilter, setDateFilter] = useState('');
   const [selectedReservation, setSelectedReservation] = useState(null);
   const [reservationToCancel, setReservationToCancel] = useState(null);
+  const [reservationToDelete, setReservationToDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [cancelling, setCancelling] = useState(false);
 
+  const rol = String(usuario?.rol ?? usuario?.role ?? '')
+    .trim()
+    .toLowerCase();
+
+  const esEstudiante = rol === 'estudiante' || rol === 'student';
+  const puedeVerTodas = [ 'gestor', 'admin', 'administrador', 'manager',].includes(rol);
+
   const loadReservations = useCallback(async () => {
+    if (!usuario) {
+      setReservations([]);
+      setLoading(false);
+      return;
+    }
+
+    if (!esEstudiante && !puedeVerTodas) {
+      setReservations([]);
+      setError(`Rol no autorizado o desconocido: ${rol || 'sin rol'}`);
+      setLoading(false);
+      return;
+    }
 
     setLoading(true);
     setError('');
+
     try {
-      const response = await api.get('/reservas');
+      const endpoint = esEstudiante ? '/reservas/mias' : '/reservas';
+      console.log('Consultando reservas:', endpoint);
+      console.log('Usuario:', usuario);
+      const response = await api.get(endpoint);
       const data = Array.isArray(response.data) ? response.data : response.data?.reservas;
       if (!Array.isArray(data)) {
-        throw new Error( 'La API respondió, pero el formato de las reservas no es el esperado.' );
+        throw new Error( 'La API respondió, pero el formato de las reservas no es el esperado.');
       }
       setReservations(data);
+      console.table(data.map((reserva) => ({
+        id: reserva.id,
+        usuarioId: reserva.usuarioId,
+        estado: reserva.estado,
+        estadoVisible: reserva.estadoVisible,
+        puedeCancelar: reserva.puedeCancelar,
+        fecha: reserva.fecha,
+        franja: reserva.franja,
+      })));
     } catch (requestError) {
       setError(getErrorMessage(requestError));
       setReservations([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [usuario, esEstudiante, puedeVerTodas, rol]);
 
   useEffect(() => {
-    loadReservations();
-  }, [loadReservations]);
+    if (!cargandoSesion) {
+      loadReservations();
+    }
+  }, [cargandoSesion, loadReservations]);
 
   const stats = useMemo(() => {
 
@@ -154,6 +192,30 @@ export default function Reservas() {
       setError(getErrorMessage(requestError));
     } finally {
       setCancelling(false);
+    }
+  }
+
+  async function deleteReservation() {
+
+    if (!reservationToDelete || deleting) return;
+    const reservationId = getReservationId(reservationToDelete);
+    if (!reservationId) {
+      setError('No se encontró el identificador de esta reserva.');
+      return;
+    }
+    setDeleting(true);
+    setError('');
+    setNotice('');
+    try {
+      await api.delete(`/reservas/${encodeURIComponent(reservationId)}`);
+      setNotice(`La reserva ${reservationId} se eliminó correctamente.`);
+      setReservationToDelete(null);
+      setSelectedReservation(null);
+      await loadReservations();
+    } catch (requestError) {
+      setError(getErrorMessage(requestError));
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -373,6 +435,11 @@ export default function Reservas() {
                             <Ban size={17} />
                           </button>
                         )}
+                        {puedeVerTodas && (
+                          <button type="button" className="reservation-action delete" title="Eliminar reserva" aria-label={`Eliminar reserva ${id}`} onClick={() => setReservationToDelete(reservation)}>
+                            <Trash2 size={17} />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -525,6 +592,37 @@ export default function Reservas() {
           </section>
         </div>
       )}
+      {reservationToDelete && (
+            <div className="reservation-modal-backdrop" onMouseDown={(event) => {  if (event.target === event.currentTarget && !deleting) { setReservationToDelete(null);} }}>
+              <section className="reservation-modal confirmation-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-reservation-title">
+                <div className="cancel-warning-icon">
+                  <Trash2 size={25} />
+                </div>
+                <h2 id="delete-reservation-title">
+                  ¿Eliminar esta reserva?
+                </h2>
+                <p>
+                  Vas a eliminar permanentemente la reserva{' '}
+                  <strong>{getReservationId(reservationToDelete)}</strong>,
+                  correspondiente al casillero{' '}
+                  <strong>{getLocker(reservationToDelete)}</strong>.
+                </p>
+                <p className="confirmation-note">
+                  Esta acción eliminará el registro de Firebase y no se podrá
+                  recuperar desde la aplicación.
+                </p>
+
+                <div className="confirmation-actions">
+                  <button type="button" className="confirmation-back" disabled={deleting} onClick={() => setReservationToDelete(null)}>
+                    Volver
+                  </button>
+                  <button type="button" className="confirmation-submit delete-submit" disabled={deleting} onClick={deleteReservation}>
+                    {deleting ? 'Eliminando...' : 'Sí, eliminar'}
+                  </button>
+                </div>
+              </section>
+            </div>
+          )}
     </div>
   );
 }

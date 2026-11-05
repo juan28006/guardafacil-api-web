@@ -6,6 +6,9 @@ export const crearRepoFirestore = (app) => {
   const db = getFirestore(app);
   const mapear = (doc) => ({ id: doc.id, ...doc.data() });
   const filtrarPorUsuario = (ref, usuarioId) => (usuarioId ? ref.where('usuarioId', '==', usuarioId) : ref);
+  const referenciaBloqueo = (usuarioId, fecha, franja) => { const id = `${usuarioId}__${fecha}__${franja}`;
+    return db.collection('bloqueos_reservas').doc(id);
+  };
 
   return {
     async obtenerUsuario(uid) {
@@ -62,18 +65,46 @@ export const crearRepoFirestore = (app) => {
     },
 
     transaccion(trabajo) {
-      return db.runTransaction((t) => {
+      return db.runTransaction(async (t) => {
         const ref = (id) => db.collection('reservas').doc(id);
-        // Firestore exige hacer todas las lecturas antes de las escrituras; el servicio
-        // siempre lee primero (obtenerReserva) y escribe al final.
+
         return trabajo({
           obtenerReserva: async (id) => {
             const doc = await t.get(ref(id));
+            return doc.exists ? { id: doc.id, ...doc.data() } : null;
+          },
+          listarReservasUsuarioFranja: async (usuarioId, fecha, franja) => {
+            const consulta = db.collection('reservas') .where('usuarioId', '==', usuarioId) .where('fecha', '==', fecha) .where('franja', '==', franja);
+            const snap = await t.get(consulta);
+            return snap.docs.map(mapear);
+          },
+          obtenerBloqueoReserva: async (usuarioId, fecha, franja) => {
+            const doc = await t.get( referenciaBloqueo(usuarioId, fecha, franja));
             return doc.exists ? doc.data() : null;
           },
-          guardarReserva: async (id, datos) => { t.set(ref(id), datos); },
-          actualizarReserva: async (id, cambios) => { t.update(ref(id), cambios); },
-          archivarReserva: async (datos) => { t.set(db.collection('historial_reservas').doc(), datos); },
+          guardarBloqueoReserva: (usuarioId, fecha, franja, reservaId) => {
+            t.create( referenciaBloqueo(usuarioId, fecha, franja), { usuarioId, fecha, franja, reservaId,});
+          },
+
+          liberarBloqueoReserva: async (usuarioId, fecha, franja, reservaId) => {
+            const bloqueo = referenciaBloqueo(usuarioId, fecha, franja);
+            const doc = await t.get(bloqueo);
+            if (doc.exists && doc.data().reservaId === reservaId) {
+              t.delete(bloqueo);
+            }
+          },
+          guardarReserva: (id, datos) => {
+            t.set(ref(id), datos);
+          },
+          actualizarReserva: (id, cambios) => {
+            t.update(ref(id), cambios);
+          },
+          archivarReserva: (datos) => {
+            t.set(db.collection('historial_reservas').doc(), datos);
+          },
+          eliminarReserva: (id) => {
+            t.delete(db.collection('reservas').doc(id));
+          },
         });
       });
     },

@@ -106,94 +106,102 @@ export const crearServicios = ({ repo, config, reloj = () => new Date() }) => {
     async reservar(actor, body) {
       const { zonaId, casilleroId, fecha, franja } = body;
       const rango = exigirReservaParams(body);
-      if (reloj() >= rango.fin) throw invalido('La franja seleccionada ya terminó.');
+
+      if (reloj() >= rango.fin) {
+        throw invalido('La franja seleccionada ya terminó.');
+      }
 
       const casillero = await repo.obtenerCasillero(zonaId, casilleroId);
       if (!casillero) throw noEncontrado('El casillero no existe');
+
       const zona = await repo.obtenerZona(zonaId);
       const destino = await resolverDestino(actor, body);
 
       const id = idReserva({ casilleroId, fecha, franja });
+
       const resultado = await repo.transaccion(async (tx) => {
         const existente = await tx.obtenerReserva(id);
+
         if (existente && existente.estado !== 'cancelada') {
-          if (existente.usuarioId === destino.uid) return { reserva: existente, creada: false };
-          throw conflictoReserva(
-            'Ya existe una reserva para este casillero en la fecha y franja seleccionadas.'
-          );
+          if (existente.usuarioId === destino.uid) {
+            return { reserva: existente, creada: false };
+          }
+          throw conflictoReserva( 'Ya existe una reserva para este casillero en la fecha y franja seleccionadas.');
         }
-        if (existente) await tx.archivarReserva({ ...existente, archivedAt: reloj().toISOString() });
+
+        const bloqueo = await tx.obtenerBloqueoReserva( destino.uid, fecha, franja );
+        const reservasUsuario = await tx.listarReservasUsuarioFranja( destino.uid, fecha, franja);
+        const reservaDuplicada = reservasUsuario.find( (reserva) => reserva.id !== id && reserva.estado !== 'cancelada');
+
+        if (bloqueo || reservaDuplicada) {
+          const bloqueoActivo = bloqueo && reservasUsuario.some((reserva) => reserva.id === bloqueo.reservaId &&
+            reserva.estado !== 'cancelada');
+
+          if (bloqueoActivo || reservaDuplicada) {
+            throw conflictoReserva( 'Ya tienes una reserva para esta fecha y franja horaria. No puedes reservar otro casillero en el mismo horario.');
+          }
+        }
+        if (existente) {
+          await tx.archivarReserva({ ...existente, archivedAt: reloj().toISOString(),});
+        }
+        await tx.guardarBloqueoReserva( destino.uid, fecha, franja, id);
 
         const nueva = {
-          zonaId,
-          casilleroId,
-          zonaNombre: zona?.nombre ?? body.zonaNombre ?? null,
-          casilleroNumero: casillero.numero ?? null,
-          usuarioId: destino.uid,
-          usuarioEmail: destino.correo,
-          fecha,
-          franja,
-          estado: 'confirmada',
-          reservadaPor: actor.uid,
-          createdAt: reloj().toISOString(),
+          zonaId, casilleroId, zonaNombre: zona?.nombre ?? body.zonaNombre ?? null,
+          casilleroNumero: casillero.numero ?? null, usuarioId: destino.uid, usuarioEmail: destino.correo,
+          fecha, franja, estado: 'confirmada', reservadaPor: actor.uid, createdAt: reloj().toISOString(),
         };
         await tx.guardarReserva(id, nueva);
         return { reserva: nueva, creada: true };
       });
-      return { reserva: serializar(actor, id, resultado.reserva), creada: resultado.creada };
+
+      return { reserva: serializar(actor, id, resultado.reserva), creada: resultado.creada,
+      };
     },
 
-    
     async cancelar(actor, reservaId) {
       return repo.transaccion(async (tx) => {
         const reserva = await tx.obtenerReserva(reservaId);
-
         if (!reserva) {
           throw conflictoOperacion('La reserva ya no existe.');
         }
 
-        // El estudiante solamente puede cancelar su propia reserva.
-        if (
-          !esPersonal(actor.rol) &&
-          reserva.usuarioId !== actor.uid
-        ) {
+        if ( !esPersonal(actor.rol) && reserva.usuarioId !== actor.uid) {
           throw prohibido('No tienes permiso para cancelar esta reserva.');
         }
 
-        // Repetir una cancelación no modifica nuevamente la reserva.
         if (reserva.estado === 'cancelada') {
           return serializar(actor, reservaId, reserva);
         }
 
         if (!puedeCancelar(reserva, actor.rol, off, reloj())) {
-          throw conflictoOperacion(
-            actor.rol === ROLES.ADMINISTRADOR
-              ? 'No se puede cancelar esta reserva.'
-              : esPersonal(actor.rol)
-                ? 'La reserva ya terminó y no se puede liberar el casillero.'
-                : 'La reserva ya comenzó o no se puede cancelar.'
-          );
+          throw conflictoOperacion( actor.rol === ROLES.ADMINISTRADOR ? 'No se puede cancelar esta reserva.' : esPersonal(actor.rol) ? 'La reserva ya terminó y no se puede liberar el casillero.' : 'La reserva ya comenzó o no se puede cancelar.');
         }
 
         const ahora = reloj().toISOString();
+        await tx.liberarBloqueoReserva( reserva.usuarioId, reserva.fecha, reserva.franja, reservaId);
 
-        const cambios = {
-          estado: 'cancelada',
-          cancelledAt: ahora,
-          canceladaPor: actor.uid,
-          gestionadoPor: actor.uid,
-          updatedAt: ahora,
-        };
-
+        const cambios = { estado: 'cancelada', cancelledAt: ahora, canceladaPor: actor.uid, gestionadoPor: actor.uid, updatedAt: ahora,};
         await tx.actualizarReserva(reservaId, cambios);
-
-        return serializar(actor, reservaId, {
-          ...reserva,
-          ...cambios,
-        });
+        return serializar(actor, reservaId, { ...reserva,  ...cambios,});
       });
     },
 
+    async eliminarReserva(actor, reservaId) {
+      if (!esPersonal(actor.rol)) {
+        throw prohibido( 'Solo un gestor o administrador puede eliminar reservas.');
+      }
+
+      return repo.transaccion(async (tx) => {
+        const reserva = await tx.obtenerReserva(reservaId);
+        if (!reserva) {
+          throw noEncontrado('La reserva no existe o ya fue eliminada.');
+        }
+        await tx.liberarBloqueoReserva( reserva.usuarioId, reserva.fecha, reserva.franja, reservaId );
+        await tx.eliminarReserva(reservaId);
+        return { mensaje: 'Reserva eliminada correctamente.', reservaId,};
+      });
+    },
 
     async iniciarUso(actor, reservaId) {
       return repo.transaccion(async (tx) => {
