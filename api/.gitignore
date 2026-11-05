@@ -7,3 +7,5 @@ node_modules/
 
 # Credenciales privadas de Firebase Admin
 serviceAccount*.json
+.vercel
+.env*
